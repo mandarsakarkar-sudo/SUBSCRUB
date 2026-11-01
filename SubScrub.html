@@ -1,0 +1,145 @@
+<!DOCTYPE html><html lang="en" data-theme="sub"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"><title>SubScrub</title>
+<script src="https://cdn.tailwindcss.com/3.4.17"></script>
+<script src="https://cdn.jsdelivr.net/npm/react@18.3.1/umd/react.production.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/htm@3.1.1/dist/htm.umd.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js"></script>
+<style>
+:root{box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}
+[data-theme=sub]{--bg:#f7f9f9;--card:#fff;--tx:#0f1e3c;--mu:#5b6b84;--ac:#0d9488;--ac2:#0d9488;--bd:#e2e8f0;--inp:#fff;--hd:rgba(255,255,255,.92)}
+[data-theme=ai]{--bg:#0b1026;--card:#141a3a;--tx:#e8ecff;--mu:#9aa5d1;--ac:#8b5cf6;--ac2:#22d3ee;--bd:#262e5c;--inp:#0f1530;--hd:rgba(11,16,38,.92)}
+body{margin:0;font-family:Inter,system-ui,sans-serif;background:var(--bg);color:var(--tx);transition:background .3s,color .3s}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:14px;padding:16px}.mu{color:var(--mu)}.ac{color:var(--ac2)}
+.btn{background:var(--ac);color:#fff;border-radius:10px;padding:8px 14px;font-weight:600;font-size:14px}.btn2{border:1px solid var(--bd);border-radius:10px;padding:6px 11px;font-size:13px}
+input,select,textarea{background:var(--inp);color:var(--tx);border:1px solid var(--bd);border-radius:8px;padding:8px;width:100%;font-size:14px}
+label{font-size:12px;color:var(--mu);display:block}.chip{font-size:11px;padding:2px 8px;border-radius:99px;border:1px solid var(--ac);color:var(--ac2)}
+header{background:var(--hd);backdrop-filter:blur(8px);border-bottom:1px solid var(--bd);position:sticky;top:env(safe-area-inset-top,0px);z-index:10}
+.tab{padding:6px 14px;border-radius:99px;font-size:14px;font-weight:600}.tab.on{background:var(--ac);color:#fff}
+.ov{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:20;display:flex;align-items:flex-start;justify-content:center;padding:16px;overflow:auto}
+</style></head><body><div id="root"></div>
+<script>
+const{useState,useEffect,useRef}=React;const h=htm.bind(React.createElement);
+const K='subscrub:v1',CUR=['INR','USD','GBP','EUR'],SYM={INR:'₹',USD:'$',GBP:'£',EUR:'€'},MO={weekly:52/12,monthly:1,quarterly:1/3,yearly:1/12};
+const DEF={mod:'sub',name:'',subs:[],ai:[],notes:[],fired:{},set:{base:'INR',rates:{INR:1,USD:83,GBP:105,EUR:90},offs:[168,72,24,3]}};
+const load=()=>{try{return{...DEF,...JSON.parse(localStorage.getItem(K))}}catch(e){return DEF}};
+const uid=()=>Math.random().toString(36).slice(2,9),money=(v,c)=>(SYM[c]||'')+Number(v).toLocaleString(undefined,{maximumFractionDigits:2});
+const addP=(d,fr,k=1)=>{const x=new Date(d);if(fr==='weekly')x.setDate(x.getDate()+7*k);else x.setMonth(x.getMonth()+{monthly:1,quarterly:3,yearly:12}[fr]*k);return x};
+const iso=d=>{const x=new Date(d);return x.getFullYear()+'-'+String(x.getMonth()+1).padStart(2,'0')+'-'+String(x.getDate()).padStart(2,'0')};
+const autoEnd=s=>{const b=new Date(s.start+'T00:00');if(+s.trial>0){b.setDate(b.getDate()+ +s.trial);return b}return addP(b,s.freq)};
+const dueOf=(s,n)=>{if(s.cancelled)return null;const st=new Date(s.start+'T00:00');let b=new Date(st);
+ if(+s.trial>0){b.setDate(b.getDate()+ +s.trial);if(b>n)return{d:b,trial:true}}
+ if(s.end){const e=new Date(s.end+'T23:59');if(e>n)return{d:e,trial:false}}
+ let i=0;while(b<=n&&i<700){b=addP(b,s.freq);i++}return{d:b,trial:false}};
+const cd=ms=>{if(ms<=0)return'Ready';const s=Math.floor(ms/1e3),d=Math.floor(s/86400),hh=Math.floor(s%86400/3600),m=Math.floor(s%3600/60);return(d?d+'d ':'')+hh+'h '+String(m).padStart(2,'0')+'m '+String(s%60).padStart(2,'0')+'s'};
+const rel=ms=>ms<48*36e5?Math.max(1,Math.ceil(ms/36e5))+' hour(s)':Math.ceil(ms/864e5)+' days';
+const parseWait=t=>{let m=0,f=0;for(const x of t.matchAll(/(\d+(?:\.\d+)?)\s*(days?|d|hours?|hrs?|h|minutes?|mins?|m)\b/gi)){const n=+x[1],u=x[2][0].toLowerCase();m+=u==='d'?n*1440:u==='h'?n*60:n;f=1}return f?Math.round(m):0};
+const bind=(f,set,k)=>({value:f[k]??'',onInput:e=>set({...f,[k]:e.target.value})});
+const Fld=({l,children})=>h`<div><label>${l}</label>${children}</div>`;
+
+const newSub=()=>({id:'',name:'',account:'',price:'',cur:'INR',freq:'monthly',trial:0,start:iso(new Date()),end:'',alerts:true,cancelled:false});
+function Subs({d,setD,now}){
+ const[f,setF]=useState(newSub()),{base,rates}=d.set,conv=(p,c)=>p*(c===base?1:rates[c]||0);
+ const save=()=>{if(!f.name.trim()||f.price==='')return;const r={...f,id:f.id||uid(),price:+f.price,trial:+f.trial||0};setD(x=>({...x,subs:f.id?x.subs.map(s=>s.id===f.id?r:s):[...x.subs,r]}));setF(newSub())};
+ const up=(id,p)=>setD(x=>({...x,subs:x.subs.map(s=>s.id===id?{...s,...p}:s)}));
+ const rows=d.subs.map(s=>({s,o:dueOf(s,now)})).sort((a,b)=>(a.o?+a.o.d:9e15)-(b.o?+b.o.d:9e15));
+ const act=d.subs.filter(s=>!s.cancelled),mon=act.reduce((t,s)=>t+conv(s.price,s.cur)*MO[s.freq],0),nx=rows.find(r=>r.o);
+ return h`<div class="space-y-4">
+ <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+  ${[['Monthly total',money(mon,base)],['Yearly total',money(mon*12,base)],['Active',act.length],['Next due',nx?nx.s.name+' · '+Math.ceil((nx.o.d-now)/864e5)+'d':'—']].map(([a,b])=>h`<div class="card" key=${a}><div class="mu text-xs">${a}</div><div class="text-xl font-bold mt-1 truncate">${b}</div></div>`)}
+ </div>
+ <p class="mu text-xs">Totals in ${base} (base currency) using manual rates: ${CUR.filter(c=>c!==base).map(c=>`1 ${c} = ${rates[c]} ${base}`).join(' · ')}. Edit in Settings.</p>
+ <div class="card"><h2 class="font-bold mb-3">${f.id?'Edit subscription':'Add subscription'}</h2>
+  <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+   <${Fld} l="App / service"><input list="svc" ...${bind(f,setF,'name')} placeholder="Netflix"/><datalist id="svc">${[...new Set(d.subs.map(s=>s.name))].map(n=>h`<option key=${n} value=${n}/>`)}</datalist><//>
+   <${Fld} l="Account email / label (optional)"><input ...${bind(f,setF,'account')} placeholder="me@mail.com"/><//>
+   <${Fld} l="Price"><input type="number" min="0" step="0.01" ...${bind(f,setF,'price')}/><//>
+   <${Fld} l="Currency"><select ...${bind(f,setF,'cur')}>${CUR.map(c=>h`<option key=${c}>${c}</option>`)}</select><//>
+   <${Fld} l="Billing"><select ...${bind(f,setF,'freq')}>${['weekly','monthly','quarterly','yearly'].map(c=>h`<option key=${c} value=${c}>${c}</option>`)}</select><//>
+   <${Fld} l="Trial (days, 0 = none)"><input type="number" min="0" ...${bind(f,setF,'trial')}/><//>
+   <${Fld} l="Start date"><input type="date" ...${bind(f,setF,'start')}/><//>
+   <${Fld} l=${'Expiry (auto: '+iso(autoEnd(f))+')'}><input type="date" ...${bind(f,setF,'end')}/><//>
+  </div>
+  <div class="flex gap-2 mt-3"><button class="btn" onClick=${save}>${f.id?'Save changes':'Add'}</button>${f.id&&h`<button class="btn2" onClick=${()=>setF(newSub())}>Cancel edit</button>`}</div></div>
+ ${!rows.length&&h`<p class="mu text-center py-6">No subscriptions yet — add your first one above.</p>`}
+ ${rows.map(({s,o})=>{const dl=o?(o.d-now)/864e5:0;return h`<div key=${s.id} class="card flex flex-wrap items-center gap-3 justify-between" style=${{opacity:s.cancelled?.6:1}}>
+  <div class="min-w-0"><div class="font-bold">${s.name} <span class=${'chip ml-1'}>${s.cancelled?'Cancelled':o.trial?'Trial':'Active'}</span></div>
+   <div class="mu text-xs">${s.account||'No account label'} · ${money(s.price,s.cur)} ${s.freq}${s.cur!==base?' ≈ '+money(conv(s.price,s.cur),base):''}</div></div>
+  <div class="text-sm">${o?h`<b style=${{color:dl<=3?'#e11d48':'inherit'}}>${o.trial?'Trial ends':'Renews'} ${o.d.toLocaleDateString()}</b><div class="mu text-xs">${dl<1?'in '+rel(o.d-now):Math.ceil(dl)+' day(s) left'}</div>`:h`<span class="mu">No upcoming charge</span>`}</div>
+  <div class="flex flex-wrap gap-2 items-center"><label class="flex gap-1 items-center"><input type="checkbox" style=${{width:'auto'}} checked=${s.alerts!==false} onChange=${e=>up(s.id,{alerts:e.target.checked})}/>Alerts</label>
+   <button class="btn2" onClick=${()=>{setF({...s,price:String(s.price)});scrollTo({top:0,behavior:'smooth'})}}>Edit</button>
+   <button class="btn2" onClick=${()=>up(s.id,{cancelled:!s.cancelled})}>${s.cancelled?'Resume':'Cancel'}</button>
+   <button class="btn2" onClick=${()=>confirm('Delete '+s.name+'?')&&setD(x=>({...x,subs:x.subs.filter(y=>y.id!==s.id)}))}>Delete</button></div></div>`})}
+ </div>`}
+
+const PRE=['ChatGPT','Claude','Gemini','Perplexity','Microsoft Copilot','Midjourney','Grok','Custom…'];
+function AI({d,setD,now}){
+ const[tool,setTool]=useState('ChatGPT'),[cu,setCu]=useState(''),[hh,setHh]=useState(0),[mm,setMm]=useState(0),[note,setNote]=useState(''),[img,setImg]=useState(''),[o,setO]=useState({}),src=useRef('manual');
+ const onFile=async e=>{const fl=e.target.files[0];if(!fl)return;setImg(URL.createObjectURL(fl));setO({busy:1});
+  try{const r=await Tesseract.recognize(fl,'eng'),t=r.data.text,w=parseWait(t);if(w){setHh(Math.floor(w/60));setMm(w%60);src.current='ocr';setO({msg:`Detected ${Math.floor(w/60)}h ${w%60}m — please review and confirm below, then save.`,txt:t})}else setO({msg:'No waiting time found in the screenshot. Enter it manually.',txt:t})}
+  catch(er){setO({msg:'OCR could not run here (the engine needs to download language data). Enter the duration manually.'})}};
+ const save=()=>{const mins=(+hh||0)*60+(+mm||0),name=tool==='Custom…'?cu.trim():tool;if(!mins||!name)return;
+  setD(x=>({...x,ai:[...x.ai,{id:uid(),tool:name,start:Date.now(),reset:Date.now()+mins*6e4,note,notify:true,src:src.current}]}));setHh(0);setMm(0);setNote('');setImg('');setO({});src.current='manual'};
+ const rows=[...d.ai].sort((a,b)=>a.reset-b.reset);
+ return h`<div class="space-y-4"><div class="card"><h2 class="font-bold mb-3">Log a cooldown</h2>
+  <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+   <${Fld} l="AI tool"><select value=${tool} onChange=${e=>setTool(e.target.value)}>${PRE.map(p=>h`<option key=${p}>${p}</option>`)}</select><//>
+   ${tool==='Custom…'&&h`<${Fld} l="Custom name"><input value=${cu} onInput=${e=>setCu(e.target.value)}/><//>`}
+   <${Fld} l="Wait: hours"><input type="number" min="0" value=${hh} onInput=${e=>setHh(e.target.value)}/><//>
+   <${Fld} l="Wait: minutes"><input type="number" min="0" value=${mm} onInput=${e=>setMm(e.target.value)}/><//>
+   <${Fld} l="Note (optional)"><input value=${note} onInput=${e=>setNote(e.target.value)}/><//></div>
+  <div class="mt-3 p-3 rounded-lg" style=${{border:'1px dashed var(--bd)'}}><label>Screenshot of the limit message (OCR runs in your browser)</label>
+   <input type="file" accept="image/*" onChange=${onFile} class="mt-1"/>
+   ${img&&h`<img src=${img} alt="Uploaded screenshot" class="mt-2 rounded" style=${{maxHeight:140}}/>`}
+   ${o.busy&&h`<p class="ac text-sm mt-2">Reading screenshot…</p>`}${o.msg&&h`<p class="text-sm mt-2 ac">${o.msg}</p>`}</div>
+  <button class="btn mt-3" onClick=${save}>Confirm & start timer</button></div>
+ ${!rows.length&&h`<p class="mu text-center py-6">No active cooldowns. Log one when an AI tool tells you to wait.</p>`}
+ ${rows.map(a=>{const left=a.reset-now,p=Math.min(100,(now-a.start)/(a.reset-a.start)*100);return h`<div key=${a.id} class="card"><div class="flex flex-wrap justify-between gap-2 items-center">
+  <div><div class="font-bold">${a.tool} <span class="chip ml-1">Estimate</span>${a.src==='ocr'&&h` <span class="chip">OCR</span>`}</div><div class="mu text-xs">Est. reset ${new Date(a.reset).toLocaleString()}${a.note?' · '+a.note:''}</div></div>
+  <div class="text-2xl font-bold ac" style=${{fontVariantNumeric:'tabular-nums'}}>${left>0?cd(left):'✓ Should be ready'}</div></div>
+  <div class="mt-3 h-1.5 rounded-full" style=${{background:'var(--bd)'}}><div class="h-full rounded-full" style=${{width:p+'%',background:'linear-gradient(90deg,var(--ac),var(--ac2))'}}></div></div>
+  <div class="flex gap-2 items-center mt-3"><label class="flex gap-1 items-center"><input type="checkbox" style=${{width:'auto'}} checked=${a.notify!==false} onChange=${e=>setD(x=>({...x,ai:x.ai.map(y=>y.id===a.id?{...y,notify:e.target.checked}:y)}))}/>Remind me</label>
+   <button class="btn2" onClick=${()=>setD(x=>({...x,ai:x.ai.filter(y=>y.id!==a.id)}))}>${left>0?'Delete':'Done'}</button></div></div>`})}
+ <p class="mu text-xs">Reset times are estimates based on what you enter; they are not verified with any AI provider.</p></div>`}
+
+function Settings({d,setD,close}){
+ const s=d.set,[txt,setTxt]=useState(''),[perm,setPerm]=useState('Notification' in window?Notification.permission:'unsupported');
+ const ss=p=>setD(x=>({...x,set:{...x.set,...p}}));
+ const exp=()=>{const j=JSON.stringify({subs:d.subs,ai:d.ai,set:d.set,name:d.name},null,1);setTxt(j);try{const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([j],{type:'application/json'}));a.download='subscrub-backup.json';a.click()}catch(e){}};
+ const imp=t=>{try{const j=JSON.parse(t);setD(x=>({...x,subs:j.subs||[],ai:j.ai||[],set:{...x.set,...j.set},name:j.name||''}));setTxt('Imported ✓')}catch(e){setTxt('Invalid JSON')}};
+ const OFF=[[168,'7 days'],[72,'3 days'],[24,'1 day'],[3,'3 hours']];
+ return h`<div class="ov" onClick=${close}><div class="card w-full max-w-lg space-y-4" onClick=${e=>e.stopPropagation()}>
+  <div class="flex justify-between"><h2 class="font-bold text-lg">Settings</h2><button class="btn2" onClick=${close}>Close</button></div>
+  <${Fld} l="Your name"><input value=${d.name} onInput=${e=>setD(x=>({...x,name:e.target.value}))}/><//>
+  <${Fld} l="Base currency"><select value=${s.base} onChange=${e=>ss({base:e.target.value})}>${CUR.map(c=>h`<option key=${c}>${c}</option>`)}</select><//>
+  <div><label>Exchange rates (manual) — 1 unit = ? ${s.base}</label><div class="grid grid-cols-3 gap-2 mt-1">${CUR.filter(c=>c!==s.base).map(c=>h`<div key=${c} class="flex items-center gap-1 text-sm">1 ${c}=<input type="number" step="0.01" value=${s.rates[c]} onInput=${e=>ss({rates:{...s.rates,[c]:+e.target.value}})}/></div>`)}</div></div>
+  <div><label>Remind me before expiry/renewal</label><div class="flex flex-wrap gap-3 mt-1 text-sm">${OFF.map(([v,l])=>h`<label key=${v} class="flex gap-1 items-center" style=${{fontSize:14,color:'var(--tx)'}}><input type="checkbox" style=${{width:'auto'}} checked=${s.offs.includes(v)} onChange=${e=>ss({offs:e.target.checked?[...s.offs,v]:s.offs.filter(x=>x!==v)})}/>${l}</label>`)}</div></div>
+  <div><label>Browser notifications: ${perm}</label><button class="btn2 mt-1" onClick=${async()=>{try{setPerm(await Notification.requestPermission())}catch(e){}}}>Enable</button>
+   <p class="mu text-xs mt-1">Alerts fire while SubScrub is open in a tab. Reminders with the site closed need a server push backend (planned).</p></div>
+  <div><label>Backup</label><div class="flex gap-2 mt-1 flex-wrap"><button class="btn2" onClick=${exp}>Export JSON</button>
+   <label class="btn2" style=${{color:'var(--tx)'}}>Import file<input type="file" accept="application/json" hidden onChange=${e=>e.target.files[0]&&e.target.files[0].text().then(imp)}/></label>
+   <button class="btn2" onClick=${()=>txt&&imp(txt)}>Import pasted</button>
+   <button class="btn2" onClick=${()=>confirm('Erase all data?')&&setD({...DEF})}>Reset all</button></div>
+   <textarea rows="4" class="mt-2" value=${txt} onInput=${e=>setTxt(e.target.value)} placeholder="Exported JSON appears here — copy it, or paste a backup to import."></textarea></div></div></div>`}
+
+function App(){
+ const[d,setD]=useState(load),[now,setNow]=useState(new Date()),[sh,setSh]=useState(''),R=useRef(d);R.current=d;
+ useEffect(()=>{document.documentElement.setAttribute('data-theme',d.mod)},[d.mod]);
+ useEffect(()=>{try{localStorage.setItem(K,JSON.stringify(d))}catch(e){}},[d]);
+ useEffect(()=>{const i=setInterval(()=>setNow(new Date()),1000);return()=>clearInterval(i)},[]);
+ useEffect(()=>{const t=()=>{const n=new Date(),c=R.current,fired={...c.fired},nt=[];
+  const fire=m=>{nt.push({id:uid(),m,ts:+n,r:0});try{if('Notification' in window&&Notification.permission==='granted')new Notification('SubScrub',{body:m})}catch(e){}};
+  c.subs.forEach(s=>{if(s.alerts===false)return;const o=dueOf(s,n);if(!o)return;const ps=[...c.set.offs].sort((a,b)=>a-b).filter(x=>+n>=o.d-x*36e5);if(!ps.length)return;const ks=ps.map(x=>s.id+'|'+ +o.d+'|'+x);if(ks.every(k=>fired[k]))return;ks.forEach(k=>fired[k]=1);fire(`${s.name}${s.account?' ('+s.account+')':''}: ${o.trial?'trial ends':'renews'} in ${rel(o.d-n)}`)});
+  c.ai.forEach(a=>{if(a.notify!==false&&+n>=a.reset&&!fired['ai'+a.id]){fired['ai'+a.id]=1;fire(`${a.tool}: estimated reset time reached — try again now`)}});
+  if(nt.length)setD(x=>({...x,fired,notes:[...nt,...x.notes].slice(0,50)}))};t();const i=setInterval(t,20000);return()=>clearInterval(i)},[]);
+ const un=d.notes.filter(n=>!n.r).length;
+ return h`<div><header><div class="max-w-5xl mx-auto px-4 py-2 flex flex-wrap items-center gap-3 justify-between">
+  <div class="flex items-center gap-2"><svg width="30" height="30" viewBox="0 0 30 30"><rect width="30" height="30" rx="8" fill="var(--ac)"/><path d="M9 11c0-3 12-3 12 0s-12 4-12 8 12 3 12 0" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round"/></svg><b class="text-lg">SubScrub</b></div>
+  <nav class="flex gap-1">${[['sub','Subscriptions'],['ai','AI Usage']].map(([k,l])=>h`<button key=${k} class=${'tab '+(d.mod===k?'on':'')} onClick=${()=>setD(x=>({...x,mod:k}))}>${l}</button>`)}</nav>
+  <div class="flex items-center gap-2"><button class="btn2 relative" aria-label="Notifications" onClick=${()=>{setSh(sh==='n'?'':'n');setD(x=>({...x,notes:x.notes.map(n=>({...n,r:1}))}))}}>🔔${un>0&&h`<span class="chip ml-1">${un}</span>`}</button>
+   <button class="btn2" aria-label="Settings" onClick=${()=>setSh('s')}>⚙</button>
+   <div class="w-8 h-8 rounded-full flex items-center justify-center font-bold text-white" style=${{background:'var(--ac)'}}>${(d.name||'U')[0].toUpperCase()}</div></div></div>
+  ${sh==='n'&&h`<div class="max-w-5xl mx-auto px-4 pb-3"><div class="card max-h-64 overflow-auto text-sm space-y-2"><b>Notifications</b>${!d.notes.length&&h`<p class="mu">Nothing yet.</p>`}${d.notes.map(n=>h`<div key=${n.id}>${n.m} <span class="mu text-xs">· ${new Date(n.ts).toLocaleString()}</span></div>`)}</div></div>`}</header>
+ <main class="max-w-5xl mx-auto px-4 py-5">${d.mod==='sub'?h`<${Subs} d=${d} setD=${setD} now=${now}/>`:h`<${AI} d=${d} setD=${setD} now=${now}/>`}</main>
+ ${sh==='s'&&h`<${Settings} d=${d} setD=${setD} close=${()=>setSh('')}/>`}</div>`}
+ReactDOM.createRoot(document.getElementById('root')).render(h`<${App}/>`);
+</script></body></html>
